@@ -179,7 +179,7 @@ class MainActivity : AppCompatActivity() {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             // Hindi ko primary rakha hai; agar device support kare to "hi-IN" try karega,
             // warna system default language use hogi.
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "hi-IN")
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
         }
 
         speechRecognizer?.startListening(intent)
