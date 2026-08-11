@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.VoiceAssist" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/night_indigo</item>
+        <item name="colorPrimary">@color/saffron</item>
+        <item name="colorAccent">@color/saffron</item>
+        <item name="android:statusBarColor">@color/night_indigo_dark</item>
+    </style>
+</resources>

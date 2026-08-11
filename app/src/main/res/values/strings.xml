@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">VoiceAssist</string>
+    <string name="accessibility_service_description">VoiceAssist ko phone control karne dein — home jaana, wapas jaana, app kholna aur scroll karna jaise kaam bol kar karein.</string>
+    <string name="mic_idle">Bolne ke liye dabayein</string>
+    <string name="mic_listening">Sun raha hoon...</string>
+    <string name="enable_accessibility">Accessibility On Karein</string>
+    <string name="accessibility_needed">Voice se control karne ke liye pehle Accessibility Service on karein</string>
+</resources>
