@@ -30,6 +30,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val notificationPermissionLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) startWakeWordService() else {
+            binding.alwaysListenSwitch.isChecked = false
+            binding.statusText.text = "Notification permission zaroori hai background sunne ke liye"
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -50,6 +59,20 @@ class MainActivity : AppCompatActivity() {
                 checkMicPermissionAndListen()
             }
         }
+
+        binding.alwaysListenSwitch.isChecked = WakeWordListenerService.isRunning
+        binding.alwaysListenSwitch.setOnCheckedChangeListener { _, isChecked ->
+            if (!isServiceEnabled()) {
+                binding.statusText.text = getString(R.string.accessibility_needed)
+                binding.alwaysListenSwitch.isChecked = false
+                return@setOnCheckedChangeListener
+            }
+            if (isChecked) {
+                checkMicAndNotificationPermissionThenStart()
+            } else {
+                stopWakeWordService()
+            }
+        }
     }
 
     override fun onResume() {
@@ -64,6 +87,45 @@ class MainActivity : AppCompatActivity() {
         val am = getSystemService(ACCESSIBILITY_SERVICE) as AccessibilityManager
         val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_GENERIC)
         return enabledServices.any { it.resolveInfo.serviceInfo.packageName == packageName }
+    }
+
+    private fun checkMicAndNotificationPermissionThenStart() {
+        val micGranted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (!micGranted) {
+            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            binding.alwaysListenSwitch.isChecked = false
+            return
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val notifGranted = ContextCompat.checkSelfPermission(
+                this, Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+
+            if (!notifGranted) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                return
+            }
+        }
+
+        startWakeWordService()
+    }
+
+    private fun startWakeWordService() {
+        val intent = Intent(this, WakeWordListenerService::class.java)
+        ContextCompat.startForegroundService(this, intent)
+        binding.statusText.text = "Background mein sun raha hoon (\"Hey Assistant\" bolo)"
+    }
+
+    private fun stopWakeWordService() {
+        val intent = Intent(this, WakeWordListenerService::class.java).apply {
+            action = WakeWordListenerService.ACTION_STOP
+        }
+        startService(intent)
+        binding.statusText.text = getString(R.string.mic_idle)
     }
 
     private fun checkMicPermissionAndListen() {
