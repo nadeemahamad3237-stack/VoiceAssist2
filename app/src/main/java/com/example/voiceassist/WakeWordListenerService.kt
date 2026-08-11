@@ -23,29 +23,37 @@ class WakeWordListenerService : Service() {
     }
 
     private var speechRecognizer: SpeechRecognizer? = null
+    private var isDestroying = false
 
     override fun onCreate() {
         super.onCreate()
         isRunning = true
+        isDestroying = false
         createNotificationChannel()
         showPersistentNotification()
-        startContinuousListening()
+        initSpeechRecognizer()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            isDestroying = true
+            speechRecognizer?.destroy()
+            isRunning = false
+            stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
         }
         return START_STICKY
     }
 
-    private fun startContinuousListening() {
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) return
+    private fun initSpeechRecognizer() {
+        if (isDestroying || !SpeechRecognizer.isRecognitionAvailable(this)) return
 
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
             setRecognitionListener(object : RecognitionListener {
                 override fun onResults(results: Bundle?) {
+                    if (isDestroying) return
+
                     val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     val heard = matches?.firstOrNull()?.lowercase()?.trim().orEmpty()
 
@@ -54,11 +62,14 @@ class WakeWordListenerService : Service() {
                         handleWakeWord(heard)
                     }
                     
-                    startContinuousListening()
+                    // Smoothly restart without destroying
+                    restartListeningSmooth()
                 }
 
                 override fun onError(error: Int) {
-                    startContinuousListening()
+                    if (!isDestroying) {
+                        restartListeningSmooth()
+                    }
                 }
 
                 override fun onReadyForSpeech(params: Bundle?) {}
@@ -71,12 +82,33 @@ class WakeWordListenerService : Service() {
             })
         }
 
+        startListeningWithLongTimeout()
+    }
+
+    private fun startListeningWithLongTimeout() {
+        if (isDestroying || speechRecognizer == null) return
+
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 5000L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 5000L)
         }
-        speechRecognizer?.startListening(intent)
+        try {
+            speechRecognizer?.startListening(intent)
+        } catch (e: Exception) {
+            if (!isDestroying) restartListeningSmooth()
+        }
+    }
+
+    private fun restartListeningSmooth() {
+        if (isDestroying) return
+        // Small delay taaki recognizer recover kar sake
+        android.os.Handler(mainLooper).postDelayed({
+            if (!isDestroying) {
+                startListeningWithLongTimeout()
+            }
+        }, 100)
     }
 
     private fun handleWakeWord(heard: String) {
@@ -107,6 +139,7 @@ class WakeWordListenerService : Service() {
             .setContentText("Listening... (Say 'Hey Assistant')")
             .setSmallIcon(R.drawable.ic_mic)
             .setOngoing(true)
+            .setProgress(0, 0, true)
             .addAction(0, "Stop", stopPendingIntent)
             .build()
 
@@ -146,6 +179,7 @@ class WakeWordListenerService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        isDestroying = true
         isRunning = false
         speechRecognizer?.destroy()
     }
