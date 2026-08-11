@@ -16,68 +16,49 @@ import androidx.core.app.NotificationCompat
 class WakeWordListenerService : Service() {
 
     companion object {
-        const val CHANNEL_ID = "wake_word_channel"
+        const val CHANNEL_ID = "voiceassist_channel"
         const val NOTIFICATION_ID = 1001
         const val ACTION_STOP = "com.example.voiceassist.STOP_LISTENING"
         var isRunning = false
     }
 
     private var speechRecognizer: SpeechRecognizer? = null
-    private var isActive = false
 
     override fun onCreate() {
         super.onCreate()
         isRunning = true
         createNotificationChannel()
-        startListening()
+        showPersistentNotification()
+        startContinuousListening()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            stopListening()
-            isRunning = false
-            stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
         }
         return START_STICKY
     }
 
-    private fun startListening() {
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            stopSelf()
-            return
-        }
+    private fun startContinuousListening() {
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) return
 
-        startForeground(NOTIFICATION_ID, buildNotification("Sunraaha hoon..."))
-
-        speechRecognizer?.destroy()
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
             setRecognitionListener(object : RecognitionListener {
                 override fun onResults(results: Bundle?) {
                     val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     val heard = matches?.firstOrNull()?.lowercase()?.trim().orEmpty()
-                    
-                    if (heard.contains("hey assistant") || heard.contains("hey asistant")) {
-                        val remainder = heard
-                            .replace("hey assistant", "")
-                            .replace("hey asistant", "")
-                            .trim()
-                        
-                        if (remainder.isNotBlank()) {
-                            val response = VoiceAccessibilityService.instance?.executeCommand(remainder)
-                                ?: "Error"
-                            updateNotification(response)
-                        } else {
-                            updateNotification("Awaiting command...")
-                        }
+
+                    if (heard.isNotEmpty() && 
+                        (heard.contains("hey assistant") || heard.contains("hey asistant"))) {
+                        handleWakeWord(heard)
                     }
                     
-                    restartListening()
+                    startContinuousListening()
                 }
 
                 override fun onError(error: Int) {
-                    restartListening()
+                    startContinuousListening()
                 }
 
                 override fun onReadyForSpeech(params: Bundle?) {}
@@ -93,26 +74,65 @@ class WakeWordListenerService : Service() {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
         }
         speechRecognizer?.startListening(intent)
     }
 
-    private fun restartListening() {
-        android.os.Handler(mainLooper).postDelayed({ startListening() }, 300)
+    private fun handleWakeWord(heard: String) {
+        val command = heard.replace("hey assistant", "")
+            .replace("hey asistant", "")
+            .trim()
+
+        val response = if (command.isNotEmpty()) {
+            VoiceAccessibilityService.instance?.executeCommand(command) ?: "Error"
+        } else {
+            "Awaiting command... (bolo)"
+        }
+
+        updateNotification(response)
     }
 
-    private fun stopListening() {
-        speechRecognizer?.destroy()
-        isRunning = false
+    private fun showPersistentNotification() {
+        val stopIntent = Intent(this, WakeWordListenerService::class.java).apply {
+            action = ACTION_STOP
+        }
+        val stopPendingIntent = PendingIntent.getService(
+            this, 0, stopIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("VoiceAssist Active")
+            .setContentText("Listening... (Say 'Hey Assistant')")
+            .setSmallIcon(R.drawable.ic_mic)
+            .setOngoing(true)
+            .addAction(0, "Stop", stopPendingIntent)
+            .build()
+
+        startForeground(NOTIFICATION_ID, notification)
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        stopListening()
-    }
+    private fun updateNotification(text: String) {
+        val stopIntent = Intent(this, WakeWordListenerService::class.java).apply {
+            action = ACTION_STOP
+        }
+        val stopPendingIntent = PendingIntent.getService(
+            this, 0, stopIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
 
-    override fun onBind(intent: Intent?): IBinder? = null
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("VoiceAssist")
+            .setContentText(text)
+            .setSmallIcon(R.drawable.ic_mic)
+            .setOngoing(true)
+            .addAction(0, "Stop", stopPendingIntent)
+            .build()
+
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.notify(NOTIFICATION_ID, notification)
+    }
 
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
@@ -124,26 +144,11 @@ class WakeWordListenerService : Service() {
         manager.createNotificationChannel(channel)
     }
 
-    private fun buildNotification(text: String): Notification {
-        val stopIntent = Intent(this, WakeWordListenerService::class.java).apply {
-            action = ACTION_STOP
-        }
-        val stopPendingIntent = PendingIntent.getService(
-            this, 0, stopIntent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("VoiceAssist")
-            .setContentText(text)
-            .setSmallIcon(R.drawable.ic_mic)
-            .setOngoing(true)
-            .addAction(0, "Stop", stopPendingIntent)
-            .build()
+    override fun onDestroy() {
+        super.onDestroy()
+        isRunning = false
+        speechRecognizer?.destroy()
     }
 
-    private fun updateNotification(text: String) {
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(NOTIFICATION_ID, buildNotification(text))
-    }
+    override fun onBind(intent: Intent?): IBinder? = null
 }
