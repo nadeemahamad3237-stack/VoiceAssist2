@@ -19,35 +19,37 @@ class WakeWordListenerService : Service() {
         const val CHANNEL_ID = "wake_word_channel"
         const val NOTIFICATION_ID = 1001
         const val ACTION_STOP = "com.example.voiceassist.STOP_LISTENING"
-        private val WAKE_WORDS = listOf("hey assistant", "ok assistant", "hey asistant", "he assistant")
-
         var isRunning = false
     }
 
     private var speechRecognizer: SpeechRecognizer? = null
-    private var awaitingCommand = false
-    private var shouldKeepListening = true
+    private var isActive = false
 
     override fun onCreate() {
         super.onCreate()
         isRunning = true
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification("Sun raha hoon... bolo \"Hey Assistant\""))
+        startListening()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            stopSelfService()
+            stopListening()
+            isRunning = false
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
             return START_NOT_STICKY
         }
-        shouldKeepListening = true
-        listenLoop()
         return START_STICKY
     }
 
-    private fun listenLoop() {
-        if (!shouldKeepListening) return
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) return
+    private fun startListening() {
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            stopSelf()
+            return
+        }
+
+        startForeground(NOTIFICATION_ID, buildNotification("Sunraaha hoon..."))
 
         speechRecognizer?.destroy()
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
@@ -55,12 +57,27 @@ class WakeWordListenerService : Service() {
                 override fun onResults(results: Bundle?) {
                     val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     val heard = matches?.firstOrNull()?.lowercase()?.trim().orEmpty()
-                    handleHeard(heard)
-                    restart()
+                    
+                    if (heard.contains("hey assistant") || heard.contains("hey asistant")) {
+                        val remainder = heard
+                            .replace("hey assistant", "")
+                            .replace("hey asistant", "")
+                            .trim()
+                        
+                        if (remainder.isNotBlank()) {
+                            val response = VoiceAccessibilityService.instance?.executeCommand(remainder)
+                                ?: "Error"
+                            updateNotification(response)
+                        } else {
+                            updateNotification("Awaiting command...")
+                        }
+                    }
+                    
+                    restartListening()
                 }
 
                 override fun onError(error: Int) {
-                    restart()
+                    restartListening()
                 }
 
                 override fun onReadyForSpeech(params: Bundle?) {}
@@ -76,56 +93,23 @@ class WakeWordListenerService : Service() {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
         }
         speechRecognizer?.startListening(intent)
     }
 
-    private fun handleHeard(heard: String) {
-        if (heard.isBlank()) return
-
-        val matchedWakeWord = WAKE_WORDS.firstOrNull { heard.contains(it) }
-
-        when {
-            awaitingCommand -> {
-                awaitingCommand = false
-                runCommand(heard)
-            }
-            matchedWakeWord != null -> {
-                val remainder = heard.replace(matchedWakeWord, "").trim()
-                if (remainder.isNotBlank()) {
-                    runCommand(remainder)
-                } else {
-                    awaitingCommand = true
-                    updateNotification("Sun raha hoon, ab command bolo...")
-                }
-            }
-        }
+    private fun restartListening() {
+        android.os.Handler(mainLooper).postDelayed({ startListening() }, 300)
     }
 
-    private fun runCommand(command: String) {
-        val response = VoiceAccessibilityService.instance?.executeCommand(command)
-            ?: "Accessibility service chalu nahi hai"
-        updateNotification(response)
-    }
-
-    private fun restart() {
-        android.os.Handler(mainLooper).postDelayed({ listenLoop() }, 400)
-    }
-
-    private fun stopSelfService() {
-        shouldKeepListening = false
+    private fun stopListening() {
         speechRecognizer?.destroy()
         isRunning = false
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        shouldKeepListening = false
-        speechRecognizer?.destroy()
-        isRunning = false
+        stopListening()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -133,7 +117,7 @@ class WakeWordListenerService : Service() {
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "VoiceAssist Wake Word",
+            "VoiceAssist",
             NotificationManager.IMPORTANCE_LOW
         )
         val manager = getSystemService(NotificationManager::class.java)
@@ -154,7 +138,7 @@ class WakeWordListenerService : Service() {
             .setContentText(text)
             .setSmallIcon(R.drawable.ic_mic)
             .setOngoing(true)
-            .addAction(0, "Band Karo", stopPendingIntent)
+            .addAction(0, "Stop", stopPendingIntent)
             .build()
     }
 
